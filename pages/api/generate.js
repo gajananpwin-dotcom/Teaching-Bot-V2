@@ -6,38 +6,53 @@ const openai = hasKey ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : nul
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
-  const { subject = "", syllabus = "", language = "en" } = req.body || {};
+  const { subject = "", syllabus = "", language = "en", slidesOnly = false } = req.body || {};
 
-  // Fallback so you still see something even without a key
   if (!hasKey) {
-    return res.status(200).json({
-      output:
-        `⚠️ OPENAI_API_KEY not set on server.\n\n` +
-        `Demo output for "${subject}":\n` +
-        `• Notes: Key ideas from the syllabus.\n` +
-        `• Numericals: 3 small examples (if applicable).\n` +
-        `• Slides: 3-slide outline.\n\n` +
-        `Add OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables, then redeploy.`,
-      debug: { hasKey: false }
-    });
+    if (slidesOnly) {
+      return res.json({ slides: [
+        { title: `${subject}: Overview`, bullets: ["Why it matters","Key terms","Outcomes"] },
+        { title: "Core Concepts", bullets: ["Concept A","Concept B","Concept C"] },
+        { title: "Applications", bullets: ["Industry 1","Industry 2","Tools"] }
+      ]});
+    }
+    return res.json({ output: `Demo (no OPENAI_API_KEY). Subject: ${subject}\n\nNotes…\nQuestions…\nSlides on demand only.` });
   }
 
   try {
-    // Use a broadly available model
+    if (slidesOnly) {
+      const resp = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.5,
+        messages: [
+          { role: "system", content: "You generate concise slide bullet plans from syllabi." },
+          { role: "user", content:
+`Language: ${language}
+Subject: ${subject}
+Syllabus:
+${syllabus}
+
+Make 8–12 slides. Each slide: { title, bullets[4-6] }. Return JSON { slides: Slide[] } only.` }
+        ],
+        response_format: { type: "json_object" }
+      });
+      const raw = resp.choices?.[0]?.message?.content || "{}";
+      let data = {}; try { data = JSON.parse(raw); } catch {}
+      const slides = Array.isArray(data.slides) ? data.slides : [];
+      return res.json({ slides });
+    }
+
     const prompt = `
 Language: ${language}
 Subject: ${subject}
-
 Syllabus:
 ${syllabus}
 
 Create a compact "course pack":
-1) Short notes (bulleted, clear).
-2) 3 numericals with solutions if the subject suits; else 3 practice Q&A.
-3) A 3-slide outline (each slide: title + 4–6 bullets).
-Return plain text.
-`;
-
+1) Short notes.
+2) 3 numericals + solutions (if relevant); else 3 practice Q&A.
+3) A short recap.
+Plain text.`;
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.6,
@@ -46,19 +61,10 @@ Return plain text.
         { role: "user", content: prompt }
       ]
     });
-
-    const text =
-      resp?.choices?.[0]?.message?.content?.trim() ||
-      "No content returned from the model.";
-
-    return res.status(200).json({ output: text, debug: { hasKey: true } });
-  } catch (err) {
-    console.error("Generate error:", err);
-    return res.status(500).json({
-      error: "Generation failed.",
-      hint:
-        "Verify OPENAI_API_KEY is set in Vercel env vars and you selected a valid model.",
-      detail: String(err?.message || err)
-    });
+    const text = resp?.choices?.[0]?.message?.content?.trim() || "No content returned.";
+    return res.json({ output: text });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Generation failed", detail: String(e?.message || e) });
   }
 }
