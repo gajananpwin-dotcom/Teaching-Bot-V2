@@ -1,13 +1,30 @@
-body {
-  font-family: Arial, sans-serif;
-  margin: 0;
-  padding: 20px;
+:root {
+  --bg: #0b1021;
+  --card: #121735;
+  --muted: #8492c4;
+  --text: #e7ecff;
+  --brand: #7c9cff;
+  --brand-2: #a4f2ff;
 }
-input, textarea, select, button {
-  margin-top: 10px;
-  display: block;
-}
-button {
-  padding: 8px 16px;
-  margin-top: 10px;
-}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+.container { max-width: 1024px; margin: 0 auto; padding: 28px 16px; }
+.hero { font-size: 32px; font-weight: 800; letter-spacing: .4px; margin: 0 0 18px; }
+.sub { color: var(--muted); margin-bottom: 18px; }
+.grid { display: grid; gap: 16px; }
+@media (min-width: 900px){ .grid-2 { grid-template-columns: 1.2fr 1fr; } }
+.card { background: radial-gradient(1200px 600px at -100px -200px, rgba(164,242,255,.15), transparent 60%), var(--card);
+        border: 1px solid rgba(255,255,255,.09); border-radius: 16px; padding: 16px; }
+label { font-size: 13px; color: var(--muted); display:block; margin-bottom: 6px; }
+.input, .textarea, .select { width: 100%; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.02);
+  color: var(--text); border-radius: 12px; padding: 10px 12px; }
+.textarea { min-height: 140px; resize: vertical; }
+.row { display:flex; gap:10px; flex-wrap:wrap; }
+.badge { display:inline-flex; gap:8px; align-items:center; background:rgba(124,156,255,.12); color:#cfe3ff; border:1px solid rgba(124,156,255,.4); padding:4px 10px; border-radius:999px; font-size:12px; }
+.btn { background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  border: none; color: #081022; padding: 10px 14px; border-radius: 12px; cursor: pointer; font-weight: 700; }
+.btn.secondary { background: transparent; color: var(--text); border:1px solid rgba(255,255,255,.16); }
+.btn.warn { background:#ffb454; color:#1a1006; }
+.btn:disabled { opacity:.6; cursor:not-allowed; }
+.kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; background:#0b1233; border:1px solid rgba(255,255,255,.16); padding:2px 6px; border-radius:6px; }
+.log { background:#0b1233; border:1px solid rgba(255,255,255,.16); border-radius:12px; padding:10px; min-height:120px; white-space:pre-wrap; }
