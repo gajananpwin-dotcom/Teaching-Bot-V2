@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { containsBadLanguage, extractKeywords, isOnSubject, languageHeader } from "@/lib/guard";
+import { containsBadLanguage, extractKeywords, isOnSubject, languageHeader } from "../../lib/guard";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 let syllabusKeywords = [];
