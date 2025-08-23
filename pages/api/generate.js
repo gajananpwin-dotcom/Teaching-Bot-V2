@@ -1,4 +1,6 @@
+// pages/api/generate.js
 import OpenAI from "openai";
+import { languageHeader } from "@/lib/guard";
 
 const hasKey = !!process.env.OPENAI_API_KEY;
 const openai = hasKey ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -7,6 +9,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   const { subject = "", syllabus = "", language = "en", slidesOnly = false } = req.body || {};
+  const langName = languageHeader(language);
 
   if (!hasKey) {
     if (slidesOnly) {
@@ -16,7 +19,9 @@ export default async function handler(req, res) {
         { title: "Applications", bullets: ["Industry 1","Industry 2","Tools"] }
       ]});
     }
-    return res.json({ output: `Demo (no OPENAI_API_KEY). Subject: ${subject}\n\nNotes…\nQuestions…\nSlides on demand only.` });
+    return res.json({
+      output: `Demo (no OPENAI_API_KEY). Subject: ${subject}\n\nNotes in ${langName}…`
+    });
   }
 
   try {
@@ -25,14 +30,15 @@ export default async function handler(req, res) {
         model: "gpt-4o-mini",
         temperature: 0.5,
         messages: [
-          { role: "system", content: "You generate concise slide bullet plans from syllabi." },
+          { role: "system", content: `You generate concise slide bullet plans from syllabi. Write all content in ${langName}.` },
           { role: "user", content:
-`Language: ${language}
-Subject: ${subject}
+`Subject: ${subject}
 Syllabus:
 ${syllabus}
 
-Make 8–12 slides. Each slide: { title, bullets[4-6] }. Return JSON { slides: Slide[] } only.` }
+Make 8–12 slides. Each slide: { title, bullets[4-6] }.
+Keep titles short; bullets crisp; use ${langName}.
+Return JSON { "slides": Slide[] } only.` }
         ],
         response_format: { type: "json_object" }
       });
@@ -43,21 +49,24 @@ Make 8–12 slides. Each slide: { title, bullets[4-6] }. Return JSON { slides: S
     }
 
     const prompt = `
-Language: ${language}
+You are a helpful Indian teacher (around 30 years old). Answer in **${langName}** only.
+
 Subject: ${subject}
 Syllabus:
 ${syllabus}
 
 Create a compact "course pack":
 1) Short notes.
-2) 3 numericals + solutions (if relevant); else 3 practice Q&A.
+2) 3 numericals + solutions (if relevant) OR 3 practice Q&A.
 3) A short recap.
-Plain text.`;
+
+Keep it focused and classroom-friendly.`;
+
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.6,
       messages: [
-        { role: "system", content: "You are a helpful teaching assistant who only talks about the given subject." },
+        { role: "system", content: `You only talk about the given subject and syllabus. Use ${langName}.` },
         { role: "user", content: prompt }
       ]
     });
