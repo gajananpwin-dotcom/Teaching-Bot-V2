@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Teaching Bot V2 — Voice-enabled classroom
  * - Start Voice Lesson (from syllabus) -> speaks short chunks
- * - Interrupt & ask (hold the button) -> answers, then resumes
- * - Generate Course Pack (text)
- * - Generate PPT on demand
- * - Languages: English (en), Hindi (hi), Hinglish (mixed -> en-IN voice)
+ * - Interrupt & Ask (press & hold) -> teacher answers, then resumes
+ * - Generate Course Pack (text) + PPT on demand
+ * - Languages: English (en), Hindi (hi), Hinglish (mixed)
+ * - Voice speed control (0.75x – 1.50x)
  */
 
 export default function Home() {
@@ -17,6 +17,10 @@ export default function Home() {
   const [out, setOut] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // --- Voice speed ---
+  // Applies to both ElevenLabs (audio playbackRate) and browser TTS fallback
+  const [voiceRate, setVoiceRate] = useState(1.0); // 0.75 .. 1.50
 
   // --- Voice/lesson state ---
   const [speaking, setSpeaking] = useState(false);
@@ -34,6 +38,15 @@ export default function Home() {
       const a = audioRef.current || new Audio();
       audioRef.current = a;
       a.src = url;
+
+      // Apply voice speed and preserve pitch if supported
+      a.playbackRate = voiceRate;
+      try {
+        if ("preservesPitch" in a) a.preservesPitch = true;
+        if ("mozPreservesPitch" in a) a.mozPreservesPitch = true;
+        if ("webkitPreservesPitch" in a) a.webkitPreservesPitch = true;
+      } catch {}
+
       a.onended = () => resolve();
       a.onerror = (e) => reject(e);
       a.play().catch(reject);
@@ -54,7 +67,7 @@ export default function Home() {
   }
 
   async function speakChunk(text, lang) {
-    // try ElevenLabs via our API route
+    // Try ElevenLabs via our API
     await stopSpeaking();
     try {
       const ac = new AbortController();
@@ -62,7 +75,9 @@ export default function Home() {
       const r = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, language: lang }),
+        // We pass speed; backend currently ignores (not needed for playbackRate),
+        // but sending it makes future server-side speed handling trivial.
+        body: JSON.stringify({ text, language: lang, speed: voiceRate }),
         signal: ac.signal,
       });
       if (r.ok) {
@@ -76,7 +91,7 @@ export default function Home() {
       // fall through to browser speech
     }
 
-    // fallback: browser speech synthesis (may sound robotic)
+    // Fallback: browser speech synthesis (robotic but works)
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       await new Promise((resolve) => {
         const u = new SpeechSynthesisUtterance(text);
@@ -88,7 +103,7 @@ export default function Home() {
           pick(["english", "female"]) ||
           voices[0];
         u.lang = lang === "hi" ? "hi-IN" : "en-IN";
-        u.rate = 1.02;
+        u.rate = Math.min(2, Math.max(0.5, voiceRate)); // map slider to speech rate
         u.pitch = 1.0;
         u.onend = resolve;
         window.speechSynthesis.speak(u);
@@ -193,18 +208,37 @@ export default function Home() {
     interrupted.current = true;
   };
 
-  // --- Interrupt button (press & hold) -> capture voice query -> answer -> resume ---
-  const holdToAsk = () => {
-    if (!speaking) return;
-    interrupted.current = true;
-    stopSpeaking();
-    setSpeaking(false);
+  // --- Interrupt & Ask (press/hold to speak) ---
 
-    // Browser STT (SpeechRecognition / webkitSpeechRecognition)
+  const recRef = useRef(null);
+  const [listening, setListening] = useState(false);
+  const transcriptRef = useRef("");
+  const listenTimeoutRef = useRef(null);
+
+  function getRecognizer(langCode) {
     const SR =
       typeof window !== "undefined" &&
       (window.SpeechRecognition || window.webkitSpeechRecognition);
-    if (!SR) {
+    if (!SR) return null;
+    const rec = new SR();
+    rec.lang = langCode;
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    return rec;
+  }
+
+  // start listening on press
+  const startInterrupt = async () => {
+    if (!speaking || listening) return;
+
+    interrupted.current = true;
+    await stopSpeaking();
+    setSpeaking(false);
+
+    const langCode = language === "hi" ? "hi-IN" : "en-IN"; // 'mixed' -> en-IN
+    const rec = recRef.current || getRecognizer(langCode);
+    if (!rec) {
       const q = prompt("Mic not available. Type your question:");
       if (q) {
         const remaining = script.slice(speakIdx.current);
@@ -215,22 +249,65 @@ export default function Home() {
       return;
     }
 
-    const rec = new SR();
-    rec.lang = language === "hi" ? "hi-IN" : "en-IN"; // Hinglish -> en-IN works well
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
+    recRef.current = rec;
+    transcriptRef.current = "";
+    setListening(true);
 
     rec.onresult = (ev) => {
-      const text = ev.results?.[0]?.[0]?.transcript || "";
-      if (text) {
-        const remaining = script.slice(speakIdx.current);
-        resumeQueue.current = remaining;
-        setOut((v) => v + `\n\n🛑 Interrupted. You asked: "${text}"`);
-        ask(text).then(resumeLecture);
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r.isFinal) {
+          transcriptRef.current += (r[0]?.transcript || "") + " ";
+        }
       }
     };
-    rec.onerror = () => setErr("Microphone error");
-    rec.start();
+
+    rec.onerror = () => {
+      setListening(false);
+      try { rec.stop(); } catch {}
+      const remaining = script.slice(speakIdx.current);
+      resumeQueue.current = remaining;
+      setOut((v) => v + "\n\n(⚠️ Mic error. Resuming lecture.)");
+      resumeLecture();
+    };
+
+    rec.onend = async () => {
+      setListening(false);
+      clearTimeout(listenTimeoutRef.current);
+
+      const q = (transcriptRef.current || "").trim();
+      const remaining = script.slice(speakIdx.current);
+      resumeQueue.current = remaining;
+
+      if (q) {
+        setOut((v) => v + `\n\n🛑 Interrupted. You asked: "${q}"`);
+        await ask(q);
+      } else {
+        setOut((v) => v + "\n\n(ℹ️ No speech captured.)");
+      }
+      await resumeLecture();
+    };
+
+    try {
+      rec.start();
+      // safety timeout: stop automatically so it can't hang
+      listenTimeoutRef.current = setTimeout(() => {
+        try { rec.stop(); } catch {}
+      }, 8000);
+    } catch {
+      const remaining = script.slice(speakIdx.current);
+      resumeQueue.current = remaining;
+      setOut((v) => v + "\n\n(⚠️ Could not access mic. Resuming lecture.)");
+      resumeLecture();
+    }
+  };
+
+  // stop listening on release
+  const endInterrupt = () => {
+    if (!listening) return;
+    const rec = recRef.current;
+    try { rec && rec.stop(); } catch {}
+    clearTimeout(listenTimeoutRef.current);
   };
 
   const resumeLecture = async () => {
@@ -301,7 +378,8 @@ export default function Home() {
         "1) Enter subject + syllabus (paste or upload .txt)\n" +
         "2) Click ▶ Start Voice Lesson\n" +
         "3) Hold the red button to interrupt & ask\n" +
-        "4) Generate PPT on demand"
+        "4) Generate PPT on demand\n" +
+        "5) Adjust voice speed with the slider"
     );
   }, []);
 
@@ -353,6 +431,25 @@ export default function Home() {
                 <option value="hi">Hindi</option>
                 <option value="mixed">Hinglish</option>
               </select>
+
+              {/* Voice speed control */}
+              <label style={{ marginTop: 10 }}>
+                Voice speed: {voiceRate.toFixed(2)}×
+              </label>
+              <input
+                className="input"
+                type="range"
+                min="0.75"
+                max="1.5"
+                step="0.05"
+                value={voiceRate}
+                onChange={(e) => setVoiceRate(parseFloat(e.target.value))}
+              />
+              <div className="row" style={{ marginTop: 6, gap: 8 }}>
+                <button className="btn secondary" onClick={() => setVoiceRate(0.9)}>0.90×</button>
+                <button className="btn secondary" onClick={() => setVoiceRate(1.0)}>1.00×</button>
+                <button className="btn secondary" onClick={() => setVoiceRate(1.2)}>1.20×</button>
+              </div>
             </div>
           </div>
 
@@ -365,8 +462,10 @@ export default function Home() {
             </button>
             <button
               className="btn warn"
-              onMouseDown={holdToAsk}
-              onTouchStart={holdToAsk}
+              onMouseDown={startInterrupt}
+              onTouchStart={startInterrupt}
+              onMouseUp={endInterrupt}
+              onTouchEnd={endInterrupt}
               disabled={!speaking}
               title="Press & hold to interrupt the teacher and ask a question"
             >
