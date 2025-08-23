@@ -1,5 +1,5 @@
 // pages/api/tts.js
-// ElevenLabs high‑quality TTS. Request body: { text, language: 'en' | 'hi' | 'mixed' }
+// ElevenLabs high-quality TTS. Request body: { text, language: 'en'|'hi'|'mixed', speed? }
 // Returns audio/mpeg.
 
 export const config = { api: { bodyParser: { sizeLimit: "1mb" } } };
@@ -36,10 +36,11 @@ export default async function handler(req, res) {
         text,
         model_id: MODEL_ID,
         voice_settings: {
-          stability: 0.45,        // a bit expressive
+          stability: 0.45,        // slightly expressive teacher tone
           similarity_boost: 0.8,
           style: 0.6,
           use_speaker_boost: true
+          // speaking_rate: <not required; we control playback speed on the client>
         }
       })
     });
